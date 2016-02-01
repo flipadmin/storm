@@ -19,14 +19,18 @@
 import sys
 import os
 import traceback
+import json
+from datetime import datetime
 from collections import deque
 
-try:
-    import simplejson as json
-except ImportError:
-    import json
+class CustomJSONEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, datetime):
+            return o.isoformat()
 
-json_encode = lambda x: json.dumps(x)
+        return json.JSONEncoder.default(self, o)
+
+json_encode = lambda x: json.dumps(x, cls=CustomJSONEncoder)
 json_decode = lambda x: json.loads(x)
 
 #reads lines and reconstructs newlines appropriately
