@@ -17,26 +17,27 @@
  */
 package org.apache.storm.kafka.trident;
 
+import com.google.common.collect.ImmutableMap;
+
 import org.apache.storm.Config;
+import org.apache.storm.kafka.*;
 import org.apache.storm.metric.api.CombinedMetric;
 import org.apache.storm.metric.api.MeanReducer;
 import org.apache.storm.metric.api.ReducedMetric;
 import org.apache.storm.task.TopologyContext;
-import com.google.common.collect.ImmutableMap;
-import kafka.javaapi.consumer.SimpleConsumer;
-import kafka.javaapi.message.ByteBufferMessageSet;
-import kafka.message.Message;
-import kafka.message.MessageAndOffset;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.apache.storm.kafka.*;
-import org.apache.storm.kafka.TopicOffsetOutOfRangeException;
 import org.apache.storm.trident.operation.TridentCollector;
 import org.apache.storm.trident.spout.IOpaquePartitionedTridentSpout;
 import org.apache.storm.trident.spout.IPartitionedTridentSpout;
 import org.apache.storm.trident.topology.TransactionAttempt;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.*;
+
+import kafka.javaapi.consumer.SimpleConsumer;
+import kafka.javaapi.message.ByteBufferMessageSet;
+import kafka.message.Message;
+import kafka.message.MessageAndOffset;
 
 public class TridentKafkaEmitter {
 
@@ -65,7 +66,9 @@ public class TridentKafkaEmitter {
     private Map failFastEmitNewPartitionBatch(TransactionAttempt attempt, TridentCollector collector, Partition partition, Map lastMeta) {
         SimpleConsumer consumer = _connections.register(partition);
         Map ret = doEmitNewPartitionBatch(consumer, partition, collector, lastMeta);
-        _kafkaOffsetMetric.setLatestEmittedOffset(partition, (Long) ret.get("offset"));
+        Long offset = (Long) ret.get("offset");
+        Long endOffset = (Long) ret.get("nextOffset");
+        _kafkaOffsetMetric.setOffsetData(partition, new PartitionManager.OffsetData(endOffset, offset));
         return ret;
     }
 
@@ -133,11 +136,10 @@ public class TridentKafkaEmitter {
     }
 
     private ByteBufferMessageSet fetchMessages(SimpleConsumer consumer, Partition partition, long offset) {
-        long start = System.nanoTime();
+        long start = System.currentTimeMillis();
         ByteBufferMessageSet msgs = null;
         msgs = KafkaUtils.fetchMessages(_config, consumer, partition, offset);
-        long end = System.nanoTime();
-        long millis = (end - start) / 1000000;
+        long millis = System.currentTimeMillis() - start;
         _kafkaMeanFetchLatencyMetric.update(millis);
         _kafkaMaxFetchLatencyMetric.update(millis);
         return msgs;

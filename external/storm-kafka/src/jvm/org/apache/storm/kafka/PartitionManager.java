@@ -17,27 +17,25 @@
  */
 package org.apache.storm.kafka;
 
+import com.google.common.base.Strings;
+import com.google.common.collect.ImmutableMap;
+
 import org.apache.storm.Config;
+import org.apache.storm.kafka.KafkaSpout.EmitState;
+import org.apache.storm.kafka.trident.MaxMetric;
 import org.apache.storm.metric.api.CombinedMetric;
 import org.apache.storm.metric.api.CountMetric;
 import org.apache.storm.metric.api.MeanReducer;
 import org.apache.storm.metric.api.ReducedMetric;
 import org.apache.storm.spout.SpoutOutputCollector;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-import com.google.common.base.Strings;
-import com.google.common.collect.ImmutableMap;
+import java.util.*;
 
 import kafka.javaapi.consumer.SimpleConsumer;
 import kafka.javaapi.message.ByteBufferMessageSet;
 import kafka.message.MessageAndOffset;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import org.apache.storm.kafka.KafkaSpout.EmitState;
-import org.apache.storm.kafka.trident.MaxMetric;
-
-import java.util.*;
 
 public class PartitionManager {
     public static final Logger LOG = LoggerFactory.getLogger(PartitionManager.class);
@@ -46,6 +44,8 @@ public class PartitionManager {
     private final ReducedMetric _fetchAPILatencyMean;
     private final CountMetric _fetchAPICallCount;
     private final CountMetric _fetchAPIMessageCount;
+    // Count of messages which could not be emitted or retried because they were deleted from kafka
+    private final CountMetric _lostMessageCount;
     Long _emittedToOffset;
     // _pending key = Kafka offset, value = time at which the message was first submitted to the topology
     private SortedMap<Long,Long> _pending = new TreeMap<Long,Long>();
@@ -119,6 +119,7 @@ public class PartitionManager {
         _fetchAPILatencyMean = new ReducedMetric(new MeanReducer());
         _fetchAPICallCount = new CountMetric();
         _fetchAPIMessageCount = new CountMetric();
+        _lostMessageCount = new CountMetric();
     }
 
     public Map getMetricsDataMap() {
@@ -127,6 +128,7 @@ public class PartitionManager {
         ret.put(_partition + "/fetchAPILatencyMean", _fetchAPILatencyMean.getValueAndReset());
         ret.put(_partition + "/fetchAPICallCount", _fetchAPICallCount.getValueAndReset());
         ret.put(_partition + "/fetchAPIMessageCount", _fetchAPIMessageCount.getValueAndReset());
+        ret.put(_partition + "/lostMessageCount", _lostMessageCount.getValueAndReset());
         return ret;
     }
 
@@ -172,7 +174,7 @@ public class PartitionManager {
 
 
     private void fill() {
-        long start = System.nanoTime();
+        long start = System.currentTimeMillis();
         Long offset;
 
         // Are there failed tuples? If so, fetch those first.
@@ -186,9 +188,8 @@ public class PartitionManager {
         try {
             msgs = KafkaUtils.fetchMessages(_spoutConfig, _consumer, _partition, offset);
         } catch (TopicOffsetOutOfRangeException e) {
-            _emittedToOffset = KafkaUtils.getOffset(_consumer, _partition.topic, _partition.partition, kafka.api.OffsetRequest.EarliestTime());
-            LOG.warn("{} Using new offset: {}", _partition.partition, _emittedToOffset);
-            // fetch failed, so don't update the metrics
+            offset = KafkaUtils.getOffset(_consumer, _partition.topic, _partition.partition, kafka.api.OffsetRequest.EarliestTime());
+            // fetch failed, so don't update the fetch metrics
             
             //fix bug [STORM-643] : remove outdated failed offsets
             if (!processingNewTuples) {
@@ -196,15 +197,25 @@ public class PartitionManager {
                 // all the failed offsets, that are earlier than actual EarliestTime
                 // offset, since they are anyway not there.
                 // These calls to broker API will be then saved.
-                Set<Long> omitted = this._failedMsgRetryManager.clearInvalidMessages(_emittedToOffset);
+                Set<Long> omitted = this._failedMsgRetryManager.clearInvalidMessages(offset);
+
+                // Omitted messages have not been acked and may be lost
+                if (null != omitted) {
+                    _lostMessageCount.incrBy(omitted.size());
+                }
                 
                 LOG.warn("Removing the failed offsets that are out of range: {}", omitted);
+            }
+
+            if (offset > _emittedToOffset) {
+                _lostMessageCount.incrBy(offset - _emittedToOffset);
+                _emittedToOffset = offset;
+                LOG.warn("{} Using new offset: {}", _partition.partition, _emittedToOffset);
             }
             
             return;
         }
-        long end = System.nanoTime();
-        long millis = (end - start) / 1000000;
+        long millis = System.currentTimeMillis() - start;
         _fetchAPILatencyMax.update(millis);
         _fetchAPILatencyMean.update(millis);
         _fetchAPICallCount.incr();
@@ -294,6 +305,10 @@ public class PartitionManager {
         }
     }
 
+    public OffsetData getOffsetData() {
+        return new OffsetData(_emittedToOffset, lastCompletedOffset());
+    }
+
     public Partition getPartition() {
         return _partition;
     }
@@ -311,6 +326,16 @@ public class PartitionManager {
         public KafkaMessageId(Partition partition, long offset) {
             this.partition = partition;
             this.offset = offset;
+        }
+    }
+
+    public static class OffsetData {
+        public long latestEmittedOffset;
+        public long latestCompletedOffset;
+
+        public OffsetData(long latestEmittedOffset, long latestCompletedOffset) {
+            this.latestEmittedOffset = latestEmittedOffset;
+            this.latestCompletedOffset = latestCompletedOffset;
         }
     }
 }

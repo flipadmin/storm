@@ -15,11 +15,14 @@
 ;; limitations under the License.
 (ns org.apache.storm.scheduler.IsolationScheduler
   (:use [org.apache.storm util config log])
-  (:require [org.apache.storm.scheduler.DefaultScheduler :as DefaultScheduler])
-  (:import [java.util HashSet Set List LinkedList ArrayList Map HashMap])
+  (:import [org.apache.storm.scheduler DefaultScheduler])
+  (:import [java.util HashSet Set List LinkedList ArrayList Map HashMap]
+           [org.apache.storm.utils])
+  (:import [org.apache.storm.utils Utils Container])
   (:import [org.apache.storm.scheduler IScheduler Topologies
             Cluster TopologyDetails WorkerSlot SchedulerAssignment
-            EvenScheduler ExecutorDetails])
+            EvenScheduler ExecutorDetails]
+           [org.apache.storm.utils Utils])
   (:gen-class
     :init init
     :constructors {[] []}
@@ -27,15 +30,23 @@
     :implements [org.apache.storm.scheduler.IScheduler]))
 
 (defn -init []
-  [[] (container)])
+  [[] (Container.)])
 
 (defn -prepare [this conf]
-  (container-set! (.state this) conf))
+  (.. this state (set conf)))
 
+(defn- repeat-seq
+  ([aseq]
+    (apply concat (repeat aseq)))
+  ([amt aseq]
+    (apply concat (repeat amt aseq))))
+
+;TODO: when translating this function, you should replace the map-val with a proper for loop HERE
 (defn- compute-worker-specs "Returns mutable set of sets of executors"
   [^TopologyDetails details]
   (->> (.getExecutorToComponent details)
-       reverse-map
+       (Utils/reverseMap)
+       clojurify-structure
        (map second)
        (apply concat)
        (map vector (repeat-seq (range (.getNumWorkers details))))
@@ -61,7 +72,8 @@
   (let [name->machines (get conf ISOLATION-SCHEDULER-MACHINES)
         machines (get name->machines (.getName topology))
         workers (.getNumWorkers topology)]
-    (-> (integer-divided workers machines)
+    (-> (Utils/integerDivided workers machines)
+        clojurify-structure
         (dissoc 0)
         (HashMap.)
         )))
@@ -75,7 +87,8 @@
   (letfn [(to-slot-specs [^SchedulerAssignment ass]
             (->> ass
                  .getExecutorToSlot
-                 reverse-map
+                 (Utils/reverseMap)
+                 clojurify-structure
                  (map (fn [[slot executors]]
                         [slot (.getTopologyId ass) (set executors)]))))]
   (->> cluster
@@ -155,7 +168,7 @@
 ;; run default scheduler on isolated topologies that didn't have enough slots + non-isolated topologies on remaining machines
 ;; set blacklist to what it was initially
 (defn -schedule [this ^Topologies topologies ^Cluster cluster]
-  (let [conf (container-get (.state this))        
+  (let [conf (.. this state (get))
         orig-blacklist (HashSet. (.getBlacklistedHosts cluster))
         iso-topologies (isolated-topologies conf (.getTopologies topologies))
         iso-ids-set (->> iso-topologies (map #(.getId ^TopologyDetails %)) set)
@@ -206,7 +219,7 @@
         (-<> topology-worker-specs
              allocated-topologies
              (leftover-topologies topologies <>)
-             (DefaultScheduler/default-schedule <> cluster))
+             (DefaultScheduler/defaultSchedule <> cluster))
         (do
           (log-warn "Unable to isolate topologies " (pr-str failed-iso-topologies) ". No machine had enough worker slots to run the remaining workers for these topologies. Clearing all other resources and will wait for enough resources for isolated topologies before allocating any other resources.")
           ;; clear workers off all hosts that are not blacklisted

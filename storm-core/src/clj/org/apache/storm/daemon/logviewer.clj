@@ -18,9 +18,12 @@
   (:use [clojure.set :only [difference intersection]])
   (:use [clojure.string :only [blank? split]])
   (:use [hiccup core page-helpers form-helpers])
-  (:use [org.apache.storm config util log timer])
+  (:use [org.apache.storm config util log])
   (:use [org.apache.storm.ui helpers])
-  (:import [org.apache.storm.utils Utils VersionInfo])
+  (:import [org.apache.storm StormTimer]
+           [org.apache.storm.daemon.supervisor SupervisorUtils]
+           [org.apache.storm.metric StormMetricsRegistry])
+  (:import [org.apache.storm.utils Utils Time VersionInfo ConfigUtils])
   (:import [org.slf4j LoggerFactory])
   (:import [java.util Arrays ArrayList HashSet])
   (:import [java.util.zip GZIPInputStream])
@@ -28,34 +31,33 @@
   (:import [org.apache.logging.log4j.core Appender LoggerContext])
   (:import [org.apache.logging.log4j.core.appender RollingFileAppender])
   (:import [java.io BufferedInputStream File FileFilter FileInputStream
-            InputStream InputStreamReader])
+            InputStream InputStreamReader]
+           [java.net URLDecoder])
   (:import [java.nio.file Files Path Paths DirectoryStream])
   (:import [java.nio ByteBuffer])
-  (:import [org.apache.storm.utils Utils])
-  (:import [org.apache.storm.daemon DirectoryCleaner])
+  (:import [org.apache.storm.daemon DirectoryCleaner StormCommon])
   (:import [org.yaml.snakeyaml Yaml]
            [org.yaml.snakeyaml.constructor SafeConstructor])
-  (:import [org.apache.storm.ui InvalidRequestException]
+  (:import [org.apache.storm.ui InvalidRequestException UIHelpers IConfigurator FilterConfiguration]
            [org.apache.storm.security.auth AuthUtils])
-  (:require [org.apache.storm.daemon common [supervisor :as supervisor]])
   (:require [compojure.route :as route]
             [compojure.handler :as handler]
             [ring.middleware.keyword-params]
             [ring.util.codec :as codec]
             [ring.util.response :as resp]
             [clojure.string :as string])
-  (:require [metrics.meters :refer [defmeter mark!]])
-  (:use [org.apache.storm.daemon.common :only [start-metrics-reporters]])
   (:gen-class))
 
-(def ^:dynamic *STORM-CONF* (read-storm-config))
+(def ^:dynamic *STORM-CONF* (clojurify-structure (ConfigUtils/readStormConfig)))
 (def STORM-VERSION (VersionInfo/getVersion))
 
-(defmeter logviewer:num-log-page-http-requests)
-(defmeter logviewer:num-daemonlog-page-http-requests)
-(defmeter logviewer:num-download-log-file-http-requests)
-(defmeter logviewer:num-download-log-daemon-file-http-requests)
-(defmeter logviewer:num-list-logs-http-requests)
+(def worker-log-filename-pattern  #"^worker.log(.*)")
+
+(def logviewer:num-log-page-http-requests (StormMetricsRegistry/registerMeter "logviewer:num-log-page-http-requests"))
+(def logviewer:num-daemonlog-page-http-requests (StormMetricsRegistry/registerMeter "logviewer:num-daemonlog-page-http-requests"))
+(def logviewer:num-download-log-file-http-requests (StormMetricsRegistry/registerMeter "logviewer:num-download-log-file-http-requests"))
+(def logviewer:num-download-log-daemon-file-http-requests (StormMetricsRegistry/registerMeter "logviewer:num-download-log-daemon-file-http-requests"))
+(def logviewer:num-list-logs-http-requests (StormMetricsRegistry/registerMeter "logviewer:num-list-logs-http-requests"))
 
 (defn cleanup-cutoff-age-millis [conf now-millis]
   (- now-millis (* (conf LOGVIEWER-CLEANUP-AGE-MINS) 60 1000)))
@@ -117,9 +119,9 @@
 (defn get-topo-port-workerlog
   "Return the path of the worker log with the format of topoId/port/worker.log.*"
   [^File file]
-  (clojure.string/join file-path-separator
+  (clojure.string/join Utils/FILE_PATH_SEPARATOR
                        (take-last 3
-                                  (split (.getCanonicalPath file) (re-pattern file-path-separator)))))
+                                  (split (.getCanonicalPath file) (re-pattern Utils/FILE_PATH_SEPARATOR)))))
 
 (defn get-metadata-file-for-log-root-name [root-name root-dir]
   (let [metaFile (clojure.java.io/file root-dir "metadata"
@@ -141,25 +143,26 @@
         nil))))
 
 (defn get-worker-id-from-metadata-file [metaFile]
-  (get (clojure-from-yaml-file metaFile) "worker-id"))
+  (get (clojurify-structure (Utils/readYamlFile metaFile)) "worker-id"))
 
 (defn get-topo-owner-from-metadata-file [metaFile]
-  (get (clojure-from-yaml-file metaFile) TOPOLOGY-SUBMITTER-USER))
+  (get (clojurify-structure (Utils/readYamlFile  metaFile)) TOPOLOGY-SUBMITTER-USER))
 
 (defn identify-worker-log-dirs [log-dirs]
   "return the workerid to worker-log-dir map"
   (into {} (for [logdir log-dirs
-                 :let [metaFile (get-metadata-file-for-wroker-logdir logdir)]
-                 :when metaFile]
-             {(get-worker-id-from-metadata-file metaFile) logdir})))
+                 :let [metaFile (get-metadata-file-for-wroker-logdir logdir)]]
+             (if metaFile
+               {(get-worker-id-from-metadata-file metaFile) logdir}
+               {"" logdir})))) ;; an old directory that has no yaml file will be treated as a dead dir for deleting
 
 (defn get-alive-ids
   [conf now-secs]
   (->>
-    (supervisor/read-worker-heartbeats conf)
+    (clojurify-structure (SupervisorUtils/readWorkerHeartbeats conf))
     (remove
       #(or (not (val %))
-           (supervisor/is-worker-hb-timed-out? now-secs
+           (SupervisorUtils/isWorkerHbTimedOut now-secs
                                                (val %)
                                                conf)))
     keys
@@ -188,7 +191,7 @@
   "Return a sorted set of java.io.Files that were written by workers that are
   now active"
   [conf root-dir]
-  (let [alive-ids (get-alive-ids conf (current-time-secs))
+  (let [alive-ids (get-alive-ids conf (Time/currentTimeSecs))
         log-dirs (get-all-worker-dirs root-dir)
         id->dir (identify-worker-log-dirs log-dirs)]
     (apply sorted-set
@@ -227,12 +230,12 @@
   [^File dir]
   (let [topodir (.getParentFile dir)]
     (if (empty? (.listFiles topodir))
-      (rmr (.getCanonicalPath topodir)))))
+      (Utils/forceDelete (.getCanonicalPath topodir)))))
 
 (defn cleanup-fn!
   "Delete old log dirs for which the workers are no longer alive"
   [log-root-dir]
-  (let [now-secs (current-time-secs)
+  (let [now-secs (Time/currentTimeSecs)
         old-log-dirs (select-dirs-for-cleanup *STORM-CONF*
                                               (* now-secs 1000)
                                               log-root-dir)
@@ -250,7 +253,7 @@
     (dofor [dir dead-worker-dirs]
            (let [path (.getCanonicalPath dir)]
              (log-message "Cleaning up: Removing " path)
-             (try (rmr path)
+             (try (Utils/forceDelete path)
                   (cleanup-empty-topodir! dir)
                   (catch Exception ex (log-error ex)))))
     (per-workerdir-cleanup! (File. log-root-dir) (* per-dir-size (* 1024 1024)) cleaner)
@@ -261,13 +264,15 @@
   (let [interval-secs (conf LOGVIEWER-CLEANUP-INTERVAL-SECS)]
     (when interval-secs
       (log-debug "starting log cleanup thread at interval: " interval-secs)
-      (schedule-recurring (mk-timer :thread-name "logviewer-cleanup"
-                                    :kill-fn (fn [t]
-                                               (log-error t "Error when doing logs cleanup")
-                                               (exit-process! 20 "Error when doing log cleanup")))
-                          0 ;; Start immediately.
-                          interval-secs
-                          (fn [] (cleanup-fn! log-root-dir))))))
+
+      (let [timer (StormTimer. "logviewer-cleanup"
+                    (reify Thread$UncaughtExceptionHandler
+                      (^void uncaughtException
+                        [this ^Thread t ^Throwable e]
+                        (log-error t "Error when doing logs cleanup")
+                        (Utils/exitProcess 20 "Error when doing log cleanup"))))]
+        (.scheduleRecurring timer 0 interval-secs
+          (fn [] (cleanup-fn! log-root-dir)))))))
 
 (defn- skip-bytes
   "FileInputStream#skip may not work the first time, so ensure it successfully
@@ -308,8 +313,8 @@
         (.toString output))))))
 
 (defn get-log-user-group-whitelist [fname]
-  (let [wl-file (get-log-metadata-file fname)
-        m (clojure-from-yaml-file wl-file)]
+  (let [wl-file (ConfigUtils/getLogMetaDataFile fname)
+        m (clojurify-structure (Utils/readYamlFile wl-file))]
     (if (not-nil? m)
       (do
         (let [user-wl (.get m LOGS-USERS)
@@ -394,13 +399,21 @@
                         "Next" :enabled (> next-start start))])]]))
 
 (defn- download-link [fname]
-  [[:p (link-to (url-format "/download/%s" fname) "Download Full File")]])
+  [[:p (link-to (UIHelpers/urlFormat "/download/%s" (to-array [fname])) "Download Full File")]])
 
 (defn- daemon-download-link [fname]
-  [[:p (link-to (url-format "/daemondownload/%s" fname) "Download Full File")]])
+  [[:p (link-to (UIHelpers/urlFormat "/daemondownload/%s" (to-array [fname])) "Download Full File")]])
 
 (defn- is-txt-file [fname]
   (re-find #"\.(log.*|txt|yaml|pid)$" fname))
+
+(defn unauthorized-user-html [user]
+  [[:h2 "User '" (escape-html user) "' is not authorized."]])
+
+(defn ring-response-from-exception [ex]
+  {:headers {}
+   :status 400
+   :body (.getMessage ex)})
 
 (def default-bytes-per-page 51200)
 
@@ -514,9 +527,9 @@
 
 (defn url-to-match-centered-in-log-page
   [needle fname offset port]
-  (let [host (local-hostname)
+  (let [host (Utils/localHostname)
         port (logviewer-port)
-        fname (clojure.string/join file-path-separator (take-last 3 (split fname (re-pattern file-path-separator))))]
+        fname (clojure.string/join Utils/FILE_PATH_SEPARATOR (take-last 3 (split fname (re-pattern Utils/FILE_PATH_SEPARATOR))))]
     (url (str "http://" host ":" port "/log")
       {:file fname
        :start (max 0
@@ -818,8 +831,8 @@
                   (str "Search substring must be between 1 and 1024 UTF-8 "
                     "bytes in size (inclusive)"))))
             (catch Exception ex
-              (json-response (exception->json ex) callback :status 500))))
-        (json-response (unauthorized-user-json user) callback :status 401))
+              (json-response (UIHelpers/exceptionToJson ex) callback :status 500))))
+        (json-response (UIHelpers/unauthorizedUserJson user) callback :status 401))
       (json-response {"error" "Not Found"
                       "errorMessage" "The file was not found on this node."}
         callback
@@ -851,7 +864,7 @@
               new-matches (conj matches
                             (merge these-matches
                               { "fileName" file-name
-                                "port" (first (take-last 2 (split (.getCanonicalPath (first logs)) (re-pattern file-path-separator))))}))
+                                "port" (first (take-last 2 (split (.getCanonicalPath (first logs)) (re-pattern Utils/FILE_PATH_SEPARATOR))))}))
               new-count (+ match-count (count (these-matches "matches")))]
           (if (empty? these-matches)
             (recur matches (rest logs) 0 (+ file-offset 1) match-count)
@@ -874,12 +887,12 @@
 (defn deep-search-logs-for-topology
   [topology-id user ^String root-dir search num-matches port file-offset offset search-archived? callback origin]
   (json-response
-    (if (or (not search) (not (.exists (File. (str root-dir file-path-separator topology-id)))))
+    (if (or (not search) (not (.exists (File. (str root-dir Utils/FILE_PATH_SEPARATOR topology-id)))))
       []
       (let [file-offset (if file-offset (Integer/parseInt file-offset) 0)
             offset (if offset (Integer/parseInt offset) 0)
             num-matches (or (Integer/parseInt num-matches) 1)
-            port-dirs (vec (.listFiles (File. (str root-dir file-path-separator topology-id))))
+            port-dirs (vec (.listFiles (File. (str root-dir Utils/FILE_PATH_SEPARATOR topology-id))))
             logs-for-port-fn (partial logs-for-port user)]
         (if (or (not port) (= "*" port))
           ;; Check for all ports
@@ -892,7 +905,7 @@
           ;; Check just the one port
           (if (not (contains? (into #{} (map str (*STORM-CONF* SUPERVISOR-SLOTS-PORTS))) port))
             []
-            (let [port-dir (File. (str root-dir file-path-separator topology-id file-path-separator port))]
+            (let [port-dir (File. (str root-dir Utils/FILE_PATH_SEPARATOR topology-id Utils/FILE_PATH_SEPARATOR port))]
               (if (or (not (.exists port-dir)) (empty? (logs-for-port user port-dir)))
                 []
                 (let [filtered-logs (logs-for-port user port-dir)]
@@ -945,13 +958,13 @@
                     (if (= (str port) (.getName port-dir))
                       (into [] (DirectoryCleaner/getFilesForDir port-dir))))))))
           (if (nil? port)
-            (let [topo-dir (File. (str log-root file-path-separator topoId))]
+            (let [topo-dir (File. (str log-root Utils/FILE_PATH_SEPARATOR topoId))]
               (if (.exists topo-dir)
                 (reduce concat
                   (for [port-dir (.listFiles topo-dir)]
                     (into [] (DirectoryCleaner/getFilesForDir port-dir))))
                 []))
-            (let [port-dir (get-worker-dir-from-root log-root topoId port)]
+            (let [port-dir (ConfigUtils/getWorkerDirFromRoot log-root topoId port)]
               (if (.exists port-dir)
                 (into [] (DirectoryCleaner/getFilesForDir port-dir))
                 []))))
@@ -976,13 +989,13 @@
 (defroutes log-routes
   (GET "/log" [:as req & m]
     (try
-      (mark! logviewer:num-log-page-http-requests)
+      (.mark logviewer:num-log-page-http-requests)
       (let [servlet-request (:servlet-request req)
             log-root (:log-root req)
             user (.getUserName http-creds-handler servlet-request)
             start (if (:start m) (parse-long-from-map m :start))
             length (if (:length m) (parse-long-from-map m :length))
-            file (url-decode (:file m))]
+            file (URLDecoder/decode (:file m))]
         (log-template (log-page file start length (:grep m) user log-root)
           file user))
       (catch InvalidRequestException ex
@@ -993,21 +1006,21 @@
      (let [user (.getUserName http-creds-handler servlet-request)
            port (second (split host-port #":"))
            dir (File. (str log-root
-                           file-path-separator
+                           Utils/FILE_PATH_SEPARATOR
                            topo-id
-                           file-path-separator
+                           Utils/FILE_PATH_SEPARATOR
                            port))
            file (File. (str log-root
-                            file-path-separator
+                            Utils/FILE_PATH_SEPARATOR
                             topo-id
-                            file-path-separator
+                            Utils/FILE_PATH_SEPARATOR
                             port
-                            file-path-separator
+                            Utils/FILE_PATH_SEPARATOR
                             filename))]
        (if (and (.exists dir) (.exists file))
          (if (or (blank? (*STORM-CONF* UI-FILTER))
-               (authorized-log-user? user 
-                                     (str topo-id file-path-separator port file-path-separator "worker.log")
+               (authorized-log-user? user
+                                     (str topo-id Utils/FILE_PATH_SEPARATOR port Utils/FILE_PATH_SEPARATOR "worker.log")
                                      *STORM-CONF*))
            (-> (resp/response file)
                (resp/content-type "application/octet-stream"))
@@ -1019,14 +1032,14 @@
      (let [user (.getUserName http-creds-handler servlet-request)
            port (second (split host-port #":"))
            dir (File. (str log-root
-                           file-path-separator
+                           Utils/FILE_PATH_SEPARATOR
                            topo-id
-                           file-path-separator
+                           Utils/FILE_PATH_SEPARATOR
                            port))]
        (if (.exists dir)
          (if (or (blank? (*STORM-CONF* UI-FILTER))
-               (authorized-log-user? user 
-                                     (str topo-id file-path-separator port file-path-separator "worker.log")
+               (authorized-log-user? user
+                                     (str topo-id Utils/FILE_PATH_SEPARATOR port Utils/FILE_PATH_SEPARATOR "worker.log")
                                      *STORM-CONF*))
            (html4
              [:head
@@ -1044,13 +1057,13 @@
            (resp/status 404)))))
   (GET "/daemonlog" [:as req & m]
     (try
-      (mark! logviewer:num-daemonlog-page-http-requests)
+      (.mark logviewer:num-daemonlog-page-http-requests)
       (let [servlet-request (:servlet-request req)
             daemonlog-root (:daemonlog-root req)
             user (.getUserName http-creds-handler servlet-request)
             start (if (:start m) (parse-long-from-map m :start))
             length (if (:length m) (parse-long-from-map m :length))
-            file (url-decode (:file m))]
+            file (URLDecoder/decode (:file m))]
         (log-template (daemonlog-page file start length (:grep m) user daemonlog-root)
           file user))
       (catch InvalidRequestException ex
@@ -1058,7 +1071,7 @@
         (ring-response-from-exception ex))))
   (GET "/download/:file" [:as {:keys [servlet-request servlet-response log-root]} file & m]
     (try
-      (mark! logviewer:num-download-log-file-http-requests)
+      (.mark logviewer:num-download-log-file-http-requests)
       (let [user (.getUserName http-creds-handler servlet-request)]
         (download-log-file file servlet-request servlet-response user log-root))
       (catch InvalidRequestException ex
@@ -1066,7 +1079,7 @@
         (ring-response-from-exception ex))))
   (GET "/daemondownload/:file" [:as {:keys [servlet-request servlet-response daemonlog-root]} file & m]
     (try
-      (mark! logviewer:num-download-log-daemon-file-http-requests)
+      (.mark logviewer:num-download-log-daemon-file-http-requests)
       (let [user (.getUserName http-creds-handler servlet-request)]
         (download-log-file file servlet-request servlet-response user daemonlog-root))
       (catch InvalidRequestException ex
@@ -1078,7 +1091,7 @@
     ;; filter is configured.
     (try
       (let [user (.getUserName http-creds-handler servlet-request)]
-        (search-log-file (url-decode file)
+        (search-log-file (URLDecoder/decode file)
           user
           (if (= (:is-daemon m) "yes") daemonlog-root log-root)
           (:search-string m)
@@ -1088,7 +1101,7 @@
           (.getHeader servlet-request "Origin")))
       (catch InvalidRequestException ex
         (log-error ex)
-        (json-response (exception->json ex) (:callback m) :status 400))))
+        (json-response (UIHelpers/exceptionToJson ex) (:callback m) :status 400))))
   (GET "/deepSearch/:topo-id" [:as {:keys [servlet-request servlet-response log-root]} topo-id & m]
     ;; We do not use servlet-response here, but do not remove it from the
     ;; :keys list, or this rule could stop working when an authentication
@@ -1108,7 +1121,7 @@
           (.getHeader servlet-request "Origin")))
       (catch InvalidRequestException ex
         (log-error ex)
-        (json-response (exception->json ex) (:callback m) :status 400))))
+        (json-response (UIHelpers/exceptionToJson ex) (:callback m) :status 400))))
   (GET "/searchLogs" [:as req & m]
     (try
       (let [servlet-request (:servlet-request req)
@@ -1121,10 +1134,10 @@
           (.getHeader servlet-request "Origin")))
       (catch InvalidRequestException ex
         (log-error ex)
-        (json-response (exception->json ex) (:callback m) :status 400))))
+        (json-response (UIHelpers/exceptionToJson ex) (:callback m) :status 400))))
   (GET "/listLogs" [:as req & m]
     (try
-      (mark! logviewer:num-list-logs-http-requests)
+      (.mark logviewer:num-list-logs-http-requests)
       (let [servlet-request (:servlet-request req)
             user (.getUserName http-creds-handler servlet-request)]
         (list-log-files user
@@ -1135,7 +1148,7 @@
           (.getHeader servlet-request "Origin")))
       (catch InvalidRequestException ex
         (log-error ex)
-        (json-response (exception->json ex) (:callback m) :status 400))))
+        (json-response (UIHelpers/exceptionToJson ex) (:callback m) :status 400))))
   (route/resources "/")
   (route/not-found "Page not found"))
 
@@ -1154,13 +1167,10 @@
                                 requests-middleware))  ;; query params as map
           middle (conf-middleware logapp log-root-dir daemonlog-root-dir)
           filters-confs (if (conf UI-FILTER)
-                          [{:filter-class filter-class
-                            :filter-params (or (conf UI-FILTER-PARAMS) {})}]
+                          [(FilterConfiguration. filter-class (or (conf UI-FILTER-PARAMS) {}))]
                           [])
           filters-confs (concat filters-confs
-                          [{:filter-class "org.eclipse.jetty.servlets.GzipFilter"
-                            :filter-name "Gzipper"
-                            :filter-params {}}])
+                          [(FilterConfiguration. "org.eclipse.jetty.servlets.GzipFilter" "Gzipper" {})])
           https-port (int (or (conf LOGVIEWER-HTTPS-PORT) 0))
           keystore-path (conf LOGVIEWER-HTTPS-KEYSTORE-PATH)
           keystore-pass (conf LOGVIEWER-HTTPS-KEYSTORE-PASSWORD)
@@ -1171,31 +1181,31 @@
           truststore-type (conf LOGVIEWER-HTTPS-TRUSTSTORE-TYPE)
           want-client-auth (conf LOGVIEWER-HTTPS-WANT-CLIENT-AUTH)
           need-client-auth (conf LOGVIEWER-HTTPS-NEED-CLIENT-AUTH)]
-      (storm-run-jetty {:port (int (conf LOGVIEWER-PORT))
-                        :configurator (fn [server]
-                                        (config-ssl server
-                                                    https-port
-                                                    keystore-path
-                                                    keystore-pass
-                                                    keystore-type
-                                                    key-password
-                                                    truststore-path
-                                                    truststore-password
-                                                    truststore-type
-                                                    want-client-auth
-                                                    need-client-auth)
-                                        (config-filter server middle filters-confs))}))
+      (UIHelpers/stormRunJetty (int (conf LOGVIEWER-PORT))
+        (reify IConfigurator (execute [this server]
+                               (UIHelpers/configSsl server
+                                 https-port
+                                 keystore-path
+                                 keystore-pass
+                                 keystore-type
+                                 key-password
+                                 truststore-path
+                                 truststore-password
+                                 truststore-type
+                                 want-client-auth
+                                 need-client-auth)
+                               (UIHelpers/configFilter server (ring.util.servlet/servlet middle) filters-confs)))))
   (catch Exception ex
     (log-error ex))))
 
 (defn -main []
-  (let [conf (read-storm-config)
-        log-root (worker-artifacts-root conf)
+  (let [conf (clojurify-structure (ConfigUtils/readStormConfig))
+        log-root (ConfigUtils/workerArtifactsRoot conf)
         daemonlog-root (log-root-dir (conf LOGVIEWER-APPENDER-NAME))]
-    (setup-default-uncaught-exception-handler)
+    (Utils/setupDefaultUncaughtExceptionHandler)
     (start-log-cleaner! conf log-root)
     (log-message "Starting logviewer server for storm version '"
                  STORM-VERSION
                  "'")
     (start-logviewer! conf log-root daemonlog-root)
-    (start-metrics-reporters)))
+    (StormMetricsRegistry/startMetricsReporters conf)))

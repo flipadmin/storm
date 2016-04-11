@@ -80,7 +80,16 @@
                     <groupId>org.pentaho</groupId>
                     <artifactId>pentaho-aggdesigner-algorithm</artifactId>
                 </exclusion>
+                <exclusion>
+                    <groupId>com.fasterxml.jackson.core</groupId>
+                    <artifactId>jackson-annotations</artifactId>
+                </exclusion>
             </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+            <version>${jackson.version}</version>
         </dependency>
         <dependency>
             <groupId>commons-lang</groupId>
@@ -184,6 +193,24 @@
                                     <includes>**/Parser.jj</includes>
                                 </artifactItem>
                             </artifactItems>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <!-- using appassembler-maven-plugin instead of maven-dependency-plugin to copy dependencies
+            as copy and unpack goal are not working together -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>appassembler-maven-plugin</artifactId>
+                <version>1.9</version>
+                <executions>
+                    <execution>
+                        <id>create-repo</id>
+                        <goals>
+                            <goal>create-repository</goal>
+                        </goals>
+                        <configuration>
+                            <repositoryLayout>flat</repositoryLayout>
                         </configuration>
                     </execution>
                 </executions>
