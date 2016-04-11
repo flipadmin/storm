@@ -20,12 +20,15 @@ import sys
 import os
 import traceback
 import json
-from datetime import datetime
+from datetime import datetime, date
 from collections import deque
 
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, o):
         if isinstance(o, datetime):
+            return o.isoformat()
+        
+        if isinstance(o, date):
             return o.isoformat()
 
         return json.JSONEncoder.default(self, o)
