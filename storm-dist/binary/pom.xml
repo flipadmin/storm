@@ -41,11 +41,6 @@
             <artifactId>storm-rename-hack</artifactId>
             <version>${project.version}</version>
         </dependency>
-        <dependency>
-          <groupId>com.papertrailapp</groupId>
-          <artifactId>logback-syslog4j</artifactId>
-          <version>1.0.0</version>
-        </dependency>
     </dependencies>
 
     <build>
