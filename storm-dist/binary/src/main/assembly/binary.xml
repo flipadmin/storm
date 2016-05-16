@@ -83,7 +83,7 @@
                 <include>README.*</include>
             </includes>
         </fileSet>
-        <fileSet>
+        <!--fileSet>
             <directory>${project.basedir}/../../external/storm-hdfs/target</directory>
             <outputDirectory>external/storm-hdfs</outputDirectory>
             <includes>
@@ -316,7 +316,7 @@
             <includes>
                 <include>README.*</include>
             </includes>
-        </fileSet>
+        </fileSet-->
         <fileSet>
             <directory>${project.basedir}/../../external/storm-kafka-client/target</directory>
             <outputDirectory>external/storm-kafka-client</outputDirectory>
@@ -353,11 +353,11 @@
 
     <files>
         <!-- EXAMPLES -->
-        <file>
+        <!--file>
             <source>${project.basedir}/../../examples/storm-starter/target/storm-starter-${project.version}.jar</source>
             <outputDirectory>/examples/storm-starter/</outputDirectory>
             <destName>storm-starter-topologies-${project.version}.jar</destName>
-        </file>
+        </file-->
 
 
         <!--
