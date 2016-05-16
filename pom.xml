@@ -1109,12 +1109,11 @@
                     <artifactId>maven-surefire-report-plugin</artifactId>
                     <version>2.16</version>
                 </plugin>
-
-                <plugin>
+                <!--plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-gpg-plugin</artifactId>
                     <version>1.6</version>
-                </plugin>
+                </plugin-->
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-shade-plugin</artifactId>
@@ -1125,11 +1124,11 @@
                     <artifactId>maven-project-info-reports-plugin</artifactId>
                     <version>2.7</version>
                 </plugin>
-                <plugin>
+                <!--plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-site-plugin</artifactId>
                     <version>3.3</version>
-                </plugin>
+                </plugin-->
             </plugins>
         </pluginManagement>
 
