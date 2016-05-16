@@ -409,6 +409,21 @@
                 <module>storm-dist/binary</module>
                 <module>storm-dist/source</module>
             </modules>
+            <properties>
+          		<nexus-host>http://54.222.207.13:8081</nexus-host>
+            </properties>
+            <distributionManagement>
+          		<snapshotRepository>
+          			<id>flipsports-snapshots</id>
+          			<name>Internal Snapshots</name>
+          			<url>${nexus-host}/nexus/content/repositories/snapshots/</url>
+          		</snapshotRepository>
+          		<repository>
+          			<id>flipsports-releases</id>
+          			<name>Internal Releases</name>
+          			<url>${nexus-host}/nexus/content/repositories/releases/</url>
+          		</repository>
+          	</distributionManagement>
             <build>
                 <plugins>
                     <plugin>
@@ -480,6 +495,91 @@
                 <clojure.test.set>integration.*</clojure.test.set>
                 <clojure.test.declared.namespace.only>true</clojure.test.declared.namespace.only>
             </properties>
+        </profile>
+        <profile>
+          <id>china</id>
+          <modules>
+              <module>storm-dist/binary</module>
+              <module>storm-dist/source</module>
+          </modules>
+          <properties>
+            <nexus-host>http://54.222.207.13:8081</nexus-host>
+          </properties>
+          <repositories>
+              <repository>
+                  <releases>
+                      <enabled>true</enabled>
+                  </releases>
+                  <snapshots>
+                      <enabled>true</enabled>
+                  </snapshots>
+                  <id>flip-nexus</id>
+                  <url>${nexus-host}/repository/flip-central/</url>
+              </repository>
+          </repositories>
+          <distributionManagement>
+            <snapshotRepository>
+              <id>flipsports-snapshots</id>
+              <name>Internal Snapshots</name>
+              <url>${nexus-host}/nexus/content/repositories/snapshots/</url>
+            </snapshotRepository>
+            <repository>
+              <id>flipsports-releases</id>
+              <name>Internal Releases</name>
+              <url>${nexus-host}/nexus/content/repositories/releases/</url>
+            </repository>
+          </distributionManagement>
+          <build>
+              <plugins>
+                  <plugin>
+                      <groupId>org.apache.maven.plugins</groupId>
+                      <artifactId>maven-source-plugin</artifactId>
+                      <executions>
+                          <execution>
+                              <id>attach-sources</id>
+                              <goals>
+                                  <goal>jar</goal>
+                              </goals>
+                          </execution>
+                      </executions>
+                  </plugin>
+                  <plugin>
+                      <groupId>org.apache.maven.plugins</groupId>
+                      <artifactId>maven-javadoc-plugin</artifactId>
+                      <configuration>
+                          <outputDirectory>${project.build.directory}/javadoc</outputDirectory>
+                          <reportOutputDirectory>./docs/javadoc</reportOutputDirectory>
+                      </configuration>
+                      <executions>
+                          <execution>
+                              <id>attach-javadocs</id>
+                              <goals>
+                                  <goal>jar</goal>
+                              </goals>
+                          </execution>
+                          <execution>
+                              <id>aggregate</id>
+                              <goals>
+                                  <goal>aggregate</goal>
+                              </goals>
+                              <phase>site</phase>
+                          </execution>
+                      </executions>
+                  </plugin>
+                  <plugin>
+                      <groupId>org.apache.maven.plugins</groupId>
+                      <artifactId>maven-jar-plugin</artifactId>
+                      <configuration>
+                          <archive>
+                              <manifest>
+                                  <addDefaultImplementationEntries>true</addDefaultImplementationEntries>
+                                  <addDefaultSpecificationEntries>true</addDefaultSpecificationEntries>
+                              </manifest>
+                          </archive>
+                      </configuration>
+                  </plugin>
+              </plugins>
+          </build>
         </profile>
     </profiles>
 
