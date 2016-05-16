@@ -521,12 +521,12 @@
             <snapshotRepository>
               <id>flipsports-snapshots</id>
               <name>Internal Snapshots</name>
-              <url>${nexus-host}/nexus/content/repositories/snapshots/</url>
+              <url>${nexus-host}/repository/maven-snapshots/</url>
             </snapshotRepository>
             <repository>
               <id>flipsports-releases</id>
               <name>Internal Releases</name>
-              <url>${nexus-host}/nexus/content/repositories/releases/</url>
+              <url>${nexus-host}/repository/maven-releases/</url>
             </repository>
           </distributionManagement>
           <build>
