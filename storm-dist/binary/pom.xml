@@ -44,7 +44,7 @@
     </dependencies>
 
     <build>
-        <finalName>apache-storm-${project.version}</finalName>
+        <finalName>storm-${project.version}</finalName>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -59,7 +59,7 @@
                 </executions>
                 <configuration>
                     <attach>true</attach>
-                    <runOnlyAtExecutionRoot>false</runOnlyAtExecutionRoot>
+                    <runOnlyAtExecutionRoot>true</runOnlyAtExecutionRoot>
                     <descriptors>
                         <descriptor>${project.basedir}/src/main/assembly/binary.xml</descriptor>
                     </descriptors>
