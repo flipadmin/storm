@@ -44,7 +44,6 @@
     </dependencies>
 
     <build>
-        <finalName>storm-${project.version}</finalName>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -59,14 +58,14 @@
                 </executions>
                 <configuration>
                     <attach>true</attach>
-                    <runOnlyAtExecutionRoot>true</runOnlyAtExecutionRoot>
+                    <runOnlyAtExecutionRoot>false</runOnlyAtExecutionRoot>
                     <descriptors>
                         <descriptor>${project.basedir}/src/main/assembly/binary.xml</descriptor>
                     </descriptors>
                     <appendAssemblyId>false</appendAssemblyId>
                 </configuration>
             </plugin>
-            <plugin>
+            <!--plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>build-helper-maven-plugin</artifactId>
                 <version>1.6</version>
@@ -81,17 +80,13 @@
                             <artifacts>
                                 <artifact>
                                     <file>${project.finalName}</file>
-                                    <type>zip</type>
-                                </artifact>
-                                <artifact>
-                                    <file>${project.finalName}</file>
                                     <type>tar.gz</type>
                                 </artifact>
                             </artifacts>
                         </configuration>
                     </execution>
                 </executions>
-            </plugin>
+            </plugin-->
             <!--plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-gpg-plugin</artifactId>
