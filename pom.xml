@@ -268,7 +268,7 @@
         <module>storm-core</module>
         <module>storm-rename-hack</module>
         <module>external/storm-kafka</module>
-        <module>external/storm-hdfs</module>
+        <!--module>external/storm-hdfs</module>
         <module>external/storm-hbase</module>
         <module>external/storm-hive</module>
         <module>external/storm-jdbc</module>
@@ -282,7 +282,7 @@
         <module>external/storm-cassandra</module>
         <module>external/storm-mqtt</module>
         <module>external/storm-mongodb</module>
-        <module>examples/storm-starter</module>
+        <module>examples/storm-starter</module-->
         <module>storm-clojure</module>
         <module>external/storm-kafka-client</module>
     </modules>
