@@ -20,6 +20,7 @@ import sys
 import os
 import traceback
 import json
+import io
 from datetime import datetime, date
 from collections import deque
 
@@ -38,9 +39,11 @@ json_decode = lambda x: json.loads(x)
 
 #reads lines and reconstructs newlines appropriately
 def readMsg():
+    input_stream = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
     msg = ""
     while True:
-        line = sys.stdin.readline()
+        line = input_stream.readline()
+        # line = sys.stdin.readline()
         if not line:
             raise Exception('Read EOF from stdin')
         if line[0:-1] == "end":
